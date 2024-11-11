@@ -213,7 +213,11 @@ func handleURLShorten(w http.ResponseWriter, r *http.Request) {
 		URL  string `json:"url"`
 		Long bool   `json:"long"`
 	}
-	json.NewDecoder(r.Body).Decode(&data)
+	err := json.NewDecoder(r.Body).Decode(&data)
+	if err != nil {
+		http.Error(w, "Invalid input", http.StatusBadRequest)
+		return
+	}
 	if strings.TrimSpace(data.URL) == "" {
 		http.Error(w, "Invalid input", http.StatusBadRequest)
 		return
@@ -224,9 +228,19 @@ func handleURLShorten(w http.ResponseWriter, r *http.Request) {
 		expiry = 30 * 24 * time.Hour
 	}
 	expiresAt := time.Now().Add(expiry)
-	db.Exec("INSERT INTO urls (id, original_url, expires_at) VALUES (?, ?, ?)", id, data.URL, expiresAt)
+	_, err = db.Exec("INSERT INTO urls (id, original_url, expires_at) VALUES (?, ?, ?)", id, data.URL, expiresAt)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 	shortURL := fmt.Sprintf("https://%s/s/%s", r.Host, id)
-	fmt.Fprintf(w, "Short URL: %s\n", shortURL)
+
+	response := map[string]string{
+		"short_url": shortURL,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
 
 func handleShortURLRedirect(w http.ResponseWriter, r *http.Request) {
