@@ -99,16 +99,47 @@ func cleanupExpiredData() {
 
 func handleFileDownload(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path[1:]
-	var filename string
-	var expiresAt time.Time
-	err := db.QueryRow("SELECT filename, expires_at FROM files WHERE path = ?", path).Scan(&filename, &expiresAt)
-	if err != nil || time.Now().After(expiresAt) {
+	log.Printf("Download requested for path: %s", path)
+
+	if path == "" || strings.Contains(path, "/") || strings.Contains(path, "\\") {
+		log.Printf("Invalid path requested: %s", path)
 		http.NotFound(w, r)
 		return
 	}
+
+	var filename string
+	var expiresAt time.Time
+	err := db.QueryRow("SELECT filename, expires_at FROM files WHERE path = ?", path).
+		Scan(&filename, &expiresAt)
+
+	if err != nil {
+		log.Printf("Database error or file not found: %v", err)
+		http.NotFound(w, r)
+		return
+	}
+
+	if time.Now().After(expiresAt) {
+		log.Printf("File expired: %s", path)
+		http.NotFound(w, r)
+		return
+	}
+
 	filePath := filepath.Join(config.UploadDir, path)
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		log.Printf("File does not exist at path: %s", filePath)
+		http.NotFound(w, r)
+		return
+	}
+
 	mimeType := mime.TypeByExtension(filepath.Ext(filename))
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+
 	w.Header().Set("Content-Type", mimeType)
+	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", filename))
+
+	log.Printf("Serving file: %s with mime type: %s", filePath, mimeType)
 	http.ServeFile(w, r, filePath)
 }
 
@@ -120,29 +151,57 @@ func handleFileUpload(w http.ResponseWriter, r *http.Request) {
 	r.ParseMultipartForm(10 << 20)
 	file, handler, err := r.FormFile("file")
 	if err != nil {
+		log.Printf("Error getting form file: %v", err)
 		http.Error(w, "Invalid file", http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
+
 	filename := handler.Filename
 	extension := filepath.Ext(filename)
 	randomName := generateRandomString(8) + extension
 	filePath := filepath.Join(config.UploadDir, randomName)
+
+	log.Printf("Saving file: %s to path: %s", filename, filePath)
+
 	dst, err := os.Create(filePath)
 	if err != nil {
+		log.Printf("Error creating file: %v", err)
 		http.Error(w, "Could not save file", http.StatusInternalServerError)
 		return
 	}
 	defer dst.Close()
-	io.Copy(dst, file)
+
+	_, err = io.Copy(dst, file)
+	if err != nil {
+		log.Printf("Error copying file: %v", err)
+		http.Error(w, "Could not save file", http.StatusInternalServerError)
+		return
+	}
+
 	expiry := config.FileExpiry
 	if r.FormValue("long") == "true" {
 		expiry = 30 * 24 * time.Hour
 	}
 	expiresAt := time.Now().Add(expiry)
-	db.Exec("INSERT INTO files (path, filename, expires_at) VALUES (?, ?, ?)", randomName, filename, expiresAt)
-	downloadURL := fmt.Sprintf("https://%s/%s", r.Host, randomName)
-	fmt.Fprintf(w, "File uploaded successfully: %s\n", downloadURL)
+
+	_, err = db.Exec("INSERT INTO files (path, filename, expires_at) VALUES (?, ?, ?)",
+		randomName, filename, expiresAt)
+	if err != nil {
+		log.Printf("Error inserting into database: %v", err)
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+
+	downloadURL := fmt.Sprintf("http://%s/%s", r.Host, randomName) // Changed to http://
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"message":  "File uploaded successfully",
+		"url":      downloadURL,
+		"filename": filename,
+		"id":       randomName,
+	})
 }
 
 func handleURLShorten(w http.ResponseWriter, r *http.Request) {
