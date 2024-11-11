@@ -50,7 +50,6 @@ func main() {
 	initDB()
 	os.MkdirAll(config.UploadDir, os.ModePerm)
 	go cleanupExpiredData()
-	http.HandleFunc("/", handleHome)
 	http.HandleFunc("/upload", handleFileUpload)
 	http.HandleFunc("/s/", handleShortURLRedirect)
 	http.HandleFunc("/shorten", handleURLShorten)
@@ -97,14 +96,6 @@ func cleanupExpiredData() {
 	}
 }
 
-func handleHome(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		handleFileDownload(w, r)
-		return
-	}
-	// http.ServeFile(w, r, "index.html")
-}
-
 func handleFileDownload(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path[1:]
 	var filename string
@@ -149,7 +140,7 @@ func handleFileUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	expiresAt := time.Now().Add(expiry)
 	db.Exec("INSERT INTO files (path, filename, expires_at) VALUES (?, ?, ?)", randomName, filename, expiresAt)
-	downloadURL := fmt.Sprintf("http://%s/%s", r.Host, randomName)
+	downloadURL := fmt.Sprintf("https://%s/%s", r.Host, randomName)
 	fmt.Fprintf(w, "File uploaded successfully: %s\n", downloadURL)
 }
 
@@ -174,7 +165,7 @@ func handleURLShorten(w http.ResponseWriter, r *http.Request) {
 	}
 	expiresAt := time.Now().Add(expiry)
 	db.Exec("INSERT INTO urls (id, original_url, expires_at) VALUES (?, ?, ?)", id, data.URL, expiresAt)
-	shortURL := fmt.Sprintf("http://%s/s/%s", r.Host, id)
+	shortURL := fmt.Sprintf("https://%s/s/%s", r.Host, id)
 	fmt.Fprintf(w, "Short URL: %s\n", shortURL)
 }
 
