@@ -54,6 +54,7 @@ func main() {
 	http.HandleFunc("/s/", handleShortURLRedirect)
 	http.HandleFunc("/shorten", handleURLShorten)
 	http.HandleFunc("/stats", handleStats)
+	http.HandleFunc("/", handleFileDownload)
 	fmt.Println("Server is running on http://localhost:8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
